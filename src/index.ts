@@ -1,10 +1,10 @@
 interface MotivatedUser {
-  atcoderId: string;
+  slackName: string;
   submissions: AcSubmission[];
 }
 
 interface MoreMotivatedUser {
-  atcoderId: string;
+  slackName: string;
   targetAcceptedCount: number;
 }
 
@@ -71,14 +71,14 @@ function postMessage(messages: string | string[]): void {
     messages = [messages];
   }
 
-  const webhookUrl = PropertiesService.getScriptProperties().getProperty("WEBHOOK_URL");
-  UrlFetchApp.fetch(webhookUrl, {
+  const slackBotToken =  PropertiesService.getScriptProperties().getProperty("SLACK_BOT_TOKEN");
+  const channelID = PropertiesService.getScriptProperties().getProperty("CHANNEL_ID");
+  UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", {
     method: "post",
-    muteHttpExceptions: true,
-    payload: JSON.stringify({
-      username: "AC褒め太郎",
-      icon_url: "https://raw.githubusercontent.com/purple-jwl/atcoder-daily-ac-checker/master/img/icon.png",
-      blocks: messages.map((message) => {
+    payload: {
+      token: slackBotToken,
+      channel: channelID,
+      blocks: JSON.stringify(messages.map((message) => {
         return {
           type: "section",
           text: {
@@ -86,20 +86,20 @@ function postMessage(messages: string | string[]): void {
             text: message,
           },
         };
-      }),
-    }),
+      })),
+    },
   });
 
   Utilities.sleep(500);
 }
 
-function getMotivatedUsers(atcoderIds: string[]): MotivatedUser[] {
+function getMotivatedUsers(atcoderIds: string[], slackNames: string[]): MotivatedUser[] {
   const targetDateString = getTargetDateString();
   const fromEpochSecond = getFromEpochSecond();
   const atcoderProblems = getAtcoderProblems();
   const result: MotivatedUser[] = [];
 
-  atcoderIds.forEach((atcoderId) => {
+  atcoderIds.forEach((atcoderId, idx) => {
     if (atcoderId === "") return;
 
     const url = `https://kenkoooo.com/atcoder/atcoder-api/v3/user/submissions?user=${atcoderId}&from_second=${fromEpochSecond}`;
@@ -150,7 +150,7 @@ function getMotivatedUsers(atcoderIds: string[]): MotivatedUser[] {
       });
 
       result.push({
-        atcoderId: atcoderId,
+        slackName: slackNames[idx],
         submissions: acSubmissions,
       });
     }
@@ -158,8 +158,8 @@ function getMotivatedUsers(atcoderIds: string[]): MotivatedUser[] {
 
   result.sort((a, b) => {
     if (a.submissions.length === b.submissions.length) {
-      if (a.atcoderId < b.atcoderId) return -1;
-      if (a.atcoderId > b.atcoderId) return 1;
+      if (a.slackName < b.slackName) return -1;
+      if (a.slackName > b.slackName) return 1;
       return 0;
     }
 
@@ -169,7 +169,7 @@ function getMotivatedUsers(atcoderIds: string[]): MotivatedUser[] {
   return result;
 }
 
-function getMoreMotivatedUsers(atcoderIds: string[]): MoreMotivatedUser[] {
+function getMoreMotivatedUsers(atcoderIds: string[], slackNames: string[]): MoreMotivatedUser[] {
   const checkMark = "✅";
 
   const sheetId = PropertiesService.getScriptProperties().getProperty("SHEET_ID");
@@ -178,7 +178,7 @@ function getMoreMotivatedUsers(atcoderIds: string[]): MoreMotivatedUser[] {
   const masterData = data.shift();
 
   const result: MoreMotivatedUser[] = [];
-  atcoderIds.forEach((atcoderId) => {
+  atcoderIds.forEach((atcoderId, idx) => {
     const url = `https://kenkoooo.com/atcoder/atcoder-api/v2/user_info?user=${atcoderId}`;
     const response = UrlFetchApp.fetch(url, {
       method: "get",
@@ -219,7 +219,7 @@ function getMoreMotivatedUsers(atcoderIds: string[]): MoreMotivatedUser[] {
 
     if (updatedMaxTargetAcceptedCount !== -1) {
       result.push({
-        atcoderId: atcoderId,
+        slackName: slackNames[idx],
         targetAcceptedCount: updatedMaxTargetAcceptedCount,
       });
     }
@@ -229,8 +229,8 @@ function getMoreMotivatedUsers(atcoderIds: string[]): MoreMotivatedUser[] {
 
   result.sort((a, b) => {
     if (a.targetAcceptedCount === b.targetAcceptedCount) {
-      if (a.atcoderId < b.atcoderId) return -1;
-      if (a.atcoderId > b.atcoderId) return 1;
+      if (a.slackName < b.slackName) return -1;
+      if (a.slackName > b.slackName) return 1;
       return 0;
     }
 
@@ -245,12 +245,13 @@ function main(): void {
 
   const sheetId = PropertiesService.getScriptProperties().getProperty("SHEET_ID");
   const sheet = SpreadsheetApp.openById(sheetId).getSheetByName("管理表");
-  const data = sheet.getSheetValues(2, 1, sheet.getLastRow() - 1, 1);
+  const data = sheet.getSheetValues(2, 1, sheet.getLastRow() - 1, 2);
 
   const atcoderIds: string[] = data.map((row) => row[0].trim());
+  const slackNames: string[] = data.map((row) => row[1].trim());
 
-  const motivatedUsers: MotivatedUser[] = getMotivatedUsers(atcoderIds);
-  const moreMotivatedUsers: MoreMotivatedUser[] = getMoreMotivatedUsers(atcoderIds);
+  const motivatedUsers: MotivatedUser[] = getMotivatedUsers(atcoderIds, slackNames);
+  const moreMotivatedUsers: MoreMotivatedUser[] = getMoreMotivatedUsers(atcoderIds, slackNames);
 
   if (motivatedUsers.length) {
     const messages = [];
@@ -263,7 +264,7 @@ function main(): void {
       if (motivatedUser.submissions.length === 0) return;
 
       const tmpMessages = [];
-      tmpMessages.push(`*${motivatedUser.atcoderId}*`);
+      tmpMessages.push(`*${motivatedUser.slackName}*`);
       tmpMessages.push(
         ...motivatedUser.submissions.map((submission) => {
           return `- <https://atcoder.jp/contests/${submission.contest_id}/tasks/${submission.problem_id}|${submission.title}> | <https://atcoder.jp/contests/${submission.contest_id}/submissions/${submission.id}|提出コード>`;
@@ -286,7 +287,7 @@ function main(): void {
     messages.push(
       moreMotivatedUsers
         .map((moreMotivatedUser) => {
-          return `*${moreMotivatedUser.atcoderId}* ㊗️ *${moreMotivatedUser.targetAcceptedCount}* AC達成 👏`;
+          return `*${moreMotivatedUser.slackName}* ㊗️ *${moreMotivatedUser.targetAcceptedCount}* AC達成 👏`;
         })
         .join("\n")
     );
