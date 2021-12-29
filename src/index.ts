@@ -1,6 +1,7 @@
 interface MotivatedUser {
   slackName: string;
   submissions: AcSubmission[];
+  aojSubmissions: AojSubmission[];
 }
 
 interface MoreMotivatedUser {
@@ -26,6 +27,31 @@ interface Submission {
   length: number;
   result: string;
   execution_time: number;
+}
+
+interface AojSubmission {
+  userId: string;
+  judgeId: number;
+  problemId: string;
+  title: string;
+  language: string;
+}
+
+interface AojRawSubmission {
+  judgeId: number;
+  userId: string;
+  problemId: string;
+  language: string;
+  version: string;
+  submissionDate: number;
+  judgeDate: number;
+  cpuTime: number;
+  memory: number;
+  codeSize: number;
+  server: number;
+  policy: string;
+  rating: number;
+  review: number;
 }
 
 interface Problem {
@@ -93,7 +119,24 @@ function postMessage(messages: string | string[]): void {
   Utilities.sleep(500);
 }
 
-function getMotivatedUsers(atcoderIds: string[], slackNames: string[]): MotivatedUser[] {
+function getAOJTitle(problemId: string): string {
+  const url = `https://judgeapi.u-aizu.ac.jp/resources/descriptions/ja/${problemId}`;
+  const response = UrlFetchApp.fetch(url, {
+    method: "get",
+    contentType: "application/json",
+    muteHttpExceptions: true,
+  });
+
+  if (response.getResponseCode() !== 200) return "";
+
+  const html: string = JSON.parse(response.getContentText()).html.toLowerCase();
+  const regex = new RegExp("<h1>(<.*>)?(.*?)</h1>", "im");
+  const m = html.match(regex);
+
+  return m[m.length - 1];
+}
+
+function getMotivatedUsers(atcoderIds: string[], aojIds: string[], slackNames: string[]): MotivatedUser[] {
   const targetDateString = getTargetDateString();
   const fromEpochSecond = getFromEpochSecond();
   const atcoderProblems = getAtcoderProblems();
@@ -152,7 +195,72 @@ function getMotivatedUsers(atcoderIds: string[], slackNames: string[]): Motivate
       result.push({
         slackName: slackNames[idx],
         submissions: acSubmissions,
+        aojSubmissions: [],
       });
+    }
+  });
+
+  aojIds.forEach((aojId, idx) => {
+    if (aojId === "") return;
+
+    const url = `https://judgeapi.u-aizu.ac.jp/solutions/users/${aojId}`;
+    const response = UrlFetchApp.fetch(url, {
+      method: "get",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+    });
+
+    if (response.getResponseCode() !== 200) return;
+
+    let aojSubmissions: AojSubmission[] = [];
+    JSON.parse(response.getContentText()).forEach((submission: AojRawSubmission) => {
+      const submissionDateString = getFormattedDateString(new Date(submission.submissionDate));
+
+      if (submissionDateString !== targetDateString) return;
+
+      let updated = false;
+      aojSubmissions = aojSubmissions.map((aojSubmission) => {
+        if (aojSubmission.problemId === submission.problemId) {
+          aojSubmission.judgeId = Math.max(aojSubmission.judgeId, submission.judgeId);
+          updated = true;
+        }
+
+        return aojSubmission;
+      });
+
+      if (!updated) {
+        aojSubmissions.push({
+          userId: submission.userId,
+          judgeId: submission.judgeId,
+          problemId: submission.problemId,
+          title: getAOJTitle(submission.problemId),
+          language: submission.language,
+        });
+      }
+    });
+
+    if (aojSubmissions.length) {
+      aojSubmissions.sort((a, b) => {
+        if (a.problemId < b.problemId) return -1;
+        if (a.problemId > b.problemId) return 1;
+        return 0;
+      });
+
+      let updated = false;
+      result.forEach((resu) => {
+        if (resu.slackName == slackNames[idx]) {
+          resu.aojSubmissions = aojSubmissions;
+          updated = true;
+        }
+      });
+
+      if (!updated) {
+        result.push({
+          slackName: slackNames[idx],
+          submissions: [],
+          aojSubmissions: aojSubmissions,
+        });
+      }
     }
   });
 
@@ -245,12 +353,24 @@ function main(): void {
 
   const sheetId = PropertiesService.getScriptProperties().getProperty("SHEET_ID");
   const sheet = SpreadsheetApp.openById(sheetId).getSheetByName("管理表");
-  const data = sheet.getSheetValues(2, 1, sheet.getLastRow() - 1, 2);
+  // getSheetValues(startRow, startColumn, numRows, numColumns)
+  const data = sheet.getSheetValues(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn());
 
-  const atcoderIds: string[] = data.map((row) => row[0].trim());
-  const slackNames: string[] = data.map((row) => row[1].trim());
+  const slackNames: string[] = data.map((row) => row[0].trim());
+  const atcoderIds: string[] = data.map((row) => {
+    if (row[1]) {
+      return row[1].trim();
+    }
+    return "";
+  });
+  const aojIds: string[] = data.map((row) => {
+    if (row[2]) {
+      return row[2].trim();
+    }
+    return "";
+  });
 
-  const motivatedUsers: MotivatedUser[] = getMotivatedUsers(atcoderIds, slackNames);
+  const motivatedUsers: MotivatedUser[] = getMotivatedUsers(atcoderIds, aojIds, slackNames);
   const moreMotivatedUsers: MoreMotivatedUser[] = getMoreMotivatedUsers(atcoderIds, slackNames);
 
   if (motivatedUsers.length) {
@@ -261,13 +381,19 @@ function main(): void {
     );
 
     motivatedUsers.forEach((motivatedUser: MotivatedUser) => {
-      if (motivatedUser.submissions.length === 0) return;
+      if (motivatedUser.submissions.length === 0 && motivatedUser.aojSubmissions.length === 0) return;
 
       const tmpMessages = [];
       tmpMessages.push(`*${motivatedUser.slackName}*`);
       tmpMessages.push(
         ...motivatedUser.submissions.map((submission) => {
           return `- <https://atcoder.jp/contests/${submission.contest_id}/tasks/${submission.problem_id}|${submission.title}> | <https://atcoder.jp/contests/${submission.contest_id}/submissions/${submission.id}|提出コード>`;
+        })
+      );
+
+      tmpMessages.push(
+        ...motivatedUser.aojSubmissions.map((submission) => {
+          return `- <https://onlinejudge.u-aizu.ac.jp/problems/${submission.problemId}|${submission.problemId}: ${submission.title}> | <https://onlinejudge.u-aizu.ac.jp/status/users/${submission.userId}/submissions/1/${submission.problemId}/judge/${submission.judgeId}/${submission.language}|提出コード>`;
         })
       );
 
