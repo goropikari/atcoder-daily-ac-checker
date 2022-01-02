@@ -119,22 +119,22 @@ function postMessage(messages: string | string[]): void {
   Utilities.sleep(500);
 }
 
-function getAOJTitle(problemId: string): string {
-  const url = `https://judgeapi.u-aizu.ac.jp/resources/descriptions/ja/${problemId}`;
-  const response = UrlFetchApp.fetch(url, {
-    method: "get",
-    contentType: "application/json",
-    muteHttpExceptions: true,
-  });
-
-  if (response.getResponseCode() !== 200) return "";
-
-  const html: string = JSON.parse(response.getContentText()).html.toLowerCase();
-  const regex = new RegExp("<h1>(<.*>)?(.*?)</h1>", "im");
-  const m = html.match(regex);
-
-  return m[m.length - 1];
-}
+// function getAOJTitle(problemId: string): string {
+//   const url = `https://judgeapi.u-aizu.ac.jp/resources/descriptions/ja/${problemId}`;
+//   const response = UrlFetchApp.fetch(url, {
+//     method: "get",
+//     contentType: "application/json",
+//     muteHttpExceptions: true,
+//   });
+//
+//   if (response.getResponseCode() !== 200) return "";
+//
+//   const html: string = JSON.parse(response.getContentText()).html.toLowerCase();
+//   const regex = new RegExp("<h1>(<.*>)?(.*?)</h1>", "im");
+//   const m = html.match(regex);
+//
+//   return m[m.length - 1];
+// }
 
 function getMotivatedUsers(atcoderIds: string[], aojIds: string[], slackNames: string[]): MotivatedUser[] {
   const targetDateString = getTargetDateString();
@@ -233,7 +233,7 @@ function getMotivatedUsers(atcoderIds: string[], aojIds: string[], slackNames: s
           userId: submission.userId,
           judgeId: submission.judgeId,
           problemId: submission.problemId,
-          title: getAOJTitle(submission.problemId),
+          title: submission.problemId, // getAOJTitle(submission.problemId),
           language: submission.language,
         });
       }
@@ -393,7 +393,7 @@ function main(): void {
 
       tmpMessages.push(
         ...motivatedUser.aojSubmissions.map((submission) => {
-          return `- <https://onlinejudge.u-aizu.ac.jp/problems/${submission.problemId}|${submission.problemId}: ${submission.title}> | <https://onlinejudge.u-aizu.ac.jp/status/users/${submission.userId}/submissions/1/${submission.problemId}/judge/${submission.judgeId}/${submission.language}|提出コード>`;
+          return `- <https://onlinejudge.u-aizu.ac.jp/problems/${submission.problemId}|${submission.problemId}> | <https://onlinejudge.u-aizu.ac.jp/status/users/${submission.userId}/submissions/1/${submission.problemId}/judge/${submission.judgeId}/${submission.language}|提出コード>`;
         })
       );
 
